@@ -13,6 +13,8 @@ from nhl_poller  import NHLPoller
 from team_colors import get_colors
 from server      import run_server
 
+_ACTIONABLE = {"GOAL", "OPP_GOAL", "PERIOD_START", "ERROR"}
+
 
 # ---------------------------------------------------------------------------
 # Persistent user config (overrides config.py on boot)
@@ -73,12 +75,14 @@ async def poll_task(state, wlan, leds):
 
         result = state.poller.fetch()  # synchronous HTTP — blocks briefly
 
-        if state.event is None:  # don't clobber an unhandled event
-            state.event = result
-            state.opp_abbrev = state.poller.current.opp_abbrev
-
         state.game_state = state.poller.current.state
+        state.opp_abbrev = state.poller.current.opp_abbrev
         print(f"[Poll] {result:12s}  {state.poller.summary()}")
+
+        # Only queue actionable events; LIVE/IDLE are status, not events.
+        # Don't clobber a pending actionable event that led_task hasn't handled yet.
+        if result in _ACTIONABLE and state.event not in _ACTIONABLE:
+            state.event = result
 
         interval = (config.POLL_INTERVAL_LIVE
                     if state.game_state in {"LIVE", "CRIT"}
