@@ -58,6 +58,8 @@ def main():
                     opp_primary, opp_secondary = get_colors(poller.current.opp_abbrev)
                     leds.goal_celebration(opp_primary, opp_secondary,
                                           config.GOAL_FLASH_DURATION)
+                elif result == "PERIOD_START":
+                    leds.period_start_flash(secondary)
                 elif result == "ERROR":
                     leds.error_flash()
 

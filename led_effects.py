@@ -93,6 +93,14 @@ class LEDEffects:
             utime.sleep_ms(8)
         utime.sleep_ms(400)
 
+    def period_start_flash(self, color):
+        """Three flashes in the given color — shown at period start."""
+        for _ in range(3):
+            self.fill(color)
+            utime.sleep_ms(150)
+            self.clear()
+            utime.sleep_ms(100)
+
     def error_flash(self):
         """Red triple-flash on error."""
         for _ in range(3):

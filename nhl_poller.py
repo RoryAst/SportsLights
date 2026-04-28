@@ -32,16 +32,19 @@ class NHLPoller:
         self.current = GameState()
         self._last_score = -1          # sentinel: never seen a score yet
         self._last_opp_score = -1
+        self._last_period = -1
 
     # ------------------------------------------------------------------
 
     def fetch(self):
         """
         Poll the NHL API.  Returns one of:
-          "GOAL"     – our team just scored (score increased)
-          "LIVE"     – game is live, no new goal
-          "IDLE"     – no live game right now
-          "ERROR"    – network / parse failure
+          "GOAL"         – our team just scored (score increased)
+          "OPP_GOAL"     – opponent scored
+          "PERIOD_START" – a new period just began
+          "LIVE"         – game is live, no new goal
+          "IDLE"         – no live game right now
+          "ERROR"        – network / parse failure
         """
         try:
             resp = urequests.get(SCORE_URL, timeout=10)
@@ -95,6 +98,7 @@ class NHLPoller:
                 if state in END_STATES:
                     self._last_score = -1
                     self._last_opp_score = -1
+                    self._last_period = -1
                 return "IDLE"
 
             # Live game – check for new goal
@@ -102,9 +106,17 @@ class NHLPoller:
                 # First time seeing this game live
                 self._last_score = our_score
                 self._last_opp_score = opp_score
+                self._last_period = period
                 print(f"[NHL] Game found: {self.team} vs {self.current.opp_abbrev} | "
                       f"Score {our_score}–{opp_score} | Period {period}")
                 return "LIVE"
+
+            if period > self._last_period:
+                print(f"[NHL] Period {period} started")
+                self._last_period = period
+                self._last_score = max(self._last_score, our_score)
+                self._last_opp_score = max(self._last_opp_score, opp_score)
+                return "PERIOD_START"
 
             if our_score > self._last_score:
                 print(f"[NHL] GOAL! {self.team} scores! {our_score}–{opp_score}")
@@ -125,6 +137,7 @@ class NHLPoller:
         # Team not found in today's schedule
         self._last_score = -1
         self._last_opp_score = -1
+        self._last_period = -1
         self.current.state = "NONE"
         return "IDLE"
 
