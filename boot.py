@@ -14,6 +14,7 @@ async def boot_sequence():
     primary, _ = get_colors(config.TEAM_ABBREV)
 
     # 1. Spinning blue while connecting to WiFi
+    network.hostname("sportslights")   # advertise as sportslights.local via mDNS
     wlan = network.WLAN(network.STA_IF)
     wlan.active(True)
     wlan.connect(wifi.WIFI_SSID, wifi.WIFI_PASSWORD)
@@ -26,7 +27,7 @@ async def boot_sequence():
             await leds.error_flash()
             machine.reset()
         await leds.wifi_connecting_pulse()
-    print(f" OK  IP={wlan.ifconfig()[0]}")
+    print(f" OK  IP={wlan.ifconfig()[0]}  http://sportslights.local/")
 
     # 2. Three green flashes on connect
     await leds.wifi_connected_flash()

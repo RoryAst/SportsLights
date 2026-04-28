@@ -97,7 +97,7 @@ def _build_page(state, ip):
         "<form method='post'>"
         "<button name='action' value='update'>Check for Updates</button>"
         "</form>"
-        "<p><small>http://{ip}/</small></p>"
+        "<p><small>http://sportslights.local/ &nbsp;|&nbsp; http://{ip}/</small></p>"
         "</body></html>"
     ).format(gs=score, ver=_local_version(), opts=options, ip=ip)
 
