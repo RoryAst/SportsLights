@@ -1,23 +1,48 @@
 # main.py  –  NHL Goal Light  |  MicroPython on Raspberry Pi Pico W
 # Boot sequence (WiFi, OTA, team wipe) is handled by boot.py.
-# This file owns two concurrent async tasks: poll_task and led_task.
+# Three concurrent async tasks: poll_task, led_task, run_server.
 
 import asyncio
 import network
+import ujson
 
 import wifi
 import config
 from led_effects import LEDEffects
 from nhl_poller  import NHLPoller
 from team_colors import get_colors
+from server      import run_server
 
+
+# ---------------------------------------------------------------------------
+# Persistent user config (overrides config.py on boot)
+# ---------------------------------------------------------------------------
+
+def _apply_user_config():
+    try:
+        with open("user_config.json") as f:
+            for k, v in ujson.loads(f.read()).items():
+                setattr(config, k, v)
+    except Exception:
+        pass
+
+
+# ---------------------------------------------------------------------------
+# Shared state (written by poll_task / server, read by led_task)
+# ---------------------------------------------------------------------------
 
 class AppState:
-    """Shared state written by poll_task, consumed by led_task."""
-    event      = None   # "GOAL" | "OPP_GOAL" | "PERIOD_START" | "ERROR" | None
-    game_state = "IDLE" # drives poll interval
-    opp_abbrev = "???"  # opponent team for OPP_GOAL color lookup
+    event      = None    # "GOAL" | "OPP_GOAL" | "PERIOD_START" | "ERROR" | None
+    game_state = "IDLE"
+    opp_abbrev = "???"
+    primary    = (255, 255, 255)
+    secondary  = (80,  80,  80)
+    poller     = None    # NHLPoller — replaced live on team change
 
+
+# ---------------------------------------------------------------------------
+# WiFi helper
+# ---------------------------------------------------------------------------
 
 async def ensure_wifi(wlan, leds):
     if wlan.isconnected():
@@ -33,7 +58,11 @@ async def ensure_wifi(wlan, leds):
     return False
 
 
-async def poll_task(state, poller, wlan, leds):
+# ---------------------------------------------------------------------------
+# Poll task
+# ---------------------------------------------------------------------------
+
+async def poll_task(state, wlan, leds):
     interval = 0  # poll immediately on first iteration
     while True:
         await asyncio.sleep(interval)
@@ -42,55 +71,68 @@ async def poll_task(state, poller, wlan, leds):
             interval = config.POLL_INTERVAL_IDLE
             continue
 
-        result = poller.fetch()  # synchronous HTTP call — blocks briefly
+        result = state.poller.fetch()  # synchronous HTTP — blocks briefly
 
-        # Only set event if led_task has finished handling the previous one
-        if state.event is None:
+        if state.event is None:  # don't clobber an unhandled event
             state.event = result
-            state.opp_abbrev = poller.current.opp_abbrev
+            state.opp_abbrev = state.poller.current.opp_abbrev
 
-        state.game_state = poller.current.state
-        print(f"[Poll] {result:12s}  {poller.summary()}")
+        state.game_state = state.poller.current.state
+        print(f"[Poll] {result:12s}  {state.poller.summary()}")
 
         interval = (config.POLL_INTERVAL_LIVE
                     if state.game_state in {"LIVE", "CRIT"}
                     else config.POLL_INTERVAL_IDLE)
 
 
-async def led_task(state, leds, primary, secondary):
+# ---------------------------------------------------------------------------
+# LED task
+# ---------------------------------------------------------------------------
+
+async def led_task(state, leds):
     while True:
         ev = state.event
 
         if ev == "GOAL":
             state.event = None
-            await leds.goal_celebration(primary, secondary, config.GOAL_FLASH_DURATION)
+            await leds.goal_celebration(state.primary, state.secondary,
+                                        config.GOAL_FLASH_DURATION)
         elif ev == "OPP_GOAL":
             state.event = None
             opp_primary, opp_secondary = get_colors(state.opp_abbrev)
-            await leds.goal_celebration(opp_primary, opp_secondary, config.GOAL_FLASH_DURATION)
+            await leds.goal_celebration(opp_primary, opp_secondary,
+                                        config.GOAL_FLASH_DURATION)
         elif ev == "PERIOD_START":
             state.event = None
-            await leds.period_start_flash(secondary)
+            await leds.period_start_flash(state.secondary)
         elif ev == "ERROR":
             state.event = None
             await leds.error_flash()
         else:
-            leds.standby_dim(primary)
+            leds.standby_dim(state.primary)
             await asyncio.sleep_ms(50)
 
 
-async def main():
-    leds   = LEDEffects()
-    primary, secondary = get_colors(config.TEAM_ABBREV)
-    print(f"Team: {config.TEAM_ABBREV}  |  Primary {primary}  |  Secondary {secondary}")
+# ---------------------------------------------------------------------------
+# Main
+# ---------------------------------------------------------------------------
 
-    wlan   = network.WLAN(network.STA_IF)  # already active and connected from boot.py
-    poller = NHLPoller(config.TEAM_ABBREV)
-    state  = AppState()
+async def main():
+    _apply_user_config()
+
+    leds  = LEDEffects()
+    state = AppState()
+    state.primary, state.secondary = get_colors(config.TEAM_ABBREV)
+    state.poller = NHLPoller(config.TEAM_ABBREV)
+
+    print(f"Team: {config.TEAM_ABBREV}  |  Primary {state.primary}  |  Secondary {state.secondary}")
+
+    wlan = network.WLAN(network.STA_IF)  # already active and connected from boot.py
 
     print("Entering main loop…")
-    asyncio.create_task(poll_task(state, poller, wlan, leds))
-    await led_task(state, leds, primary, secondary)
+    asyncio.create_task(poll_task(state, wlan, leds))
+    asyncio.create_task(run_server(state, wlan))
+    await led_task(state, leds)
 
 
 asyncio.run(main())
