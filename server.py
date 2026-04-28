@@ -184,7 +184,7 @@ async def _handle(reader, writer, state, wlan):
 
 def _send(writer, html):
     writer.write(
-        "HTTP/1.0 200 OK\r\nContent-Type: text/html\r\n\r\n" + html
+        "HTTP/1.0 200 OK\r\nContent-Type: text/html\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}".format(len(html), html)
     )
 
 
