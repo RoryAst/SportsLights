@@ -1,12 +1,11 @@
 # led_effects.py  –  NeoPixel animation helpers for MicroPython
+import asyncio
 import neopixel
 from machine import Pin
-import utime
 import config
 
 
 def _scale(color, brightness):
-    """Apply brightness (0.0-1.0) to an RGB tuple."""
     return tuple(int(c * brightness) for c in color)
 
 
@@ -20,7 +19,7 @@ class LEDEffects:
         self.clear()
 
     # ------------------------------------------------------------------
-    # Low-level helpers
+    # Low-level helpers (sync — no sleeping)
     # ------------------------------------------------------------------
 
     def clear(self):
@@ -37,82 +36,6 @@ class LEDEffects:
     def _set_pixel(self, i, color):
         self.np[i] = _scale(color, self.brightness)
 
-    # ------------------------------------------------------------------
-    # Boot / status animations
-    # ------------------------------------------------------------------
-
-    def startup_sweep(self, color=(0, 120, 255)):
-        self.clear()
-        for i in range(self.n):
-            self._set_pixel(i, color)
-            self.np.write()
-            utime.sleep_ms(10)
-        for i in range(self.n):
-            self.np[i] = (0, 0, 0)
-            self.np.write()
-            utime.sleep_ms(10)
-
-    def wifi_connecting_pulse(self):
-        """One spinning-chase frame – call repeatedly while connecting."""
-        self.clear()
-        spacing = self.n // 3
-        for j in range(3):
-            self._set_pixel((self._chase_pos + j * spacing) % self.n, (0, 0, 200))
-        self.np.write()
-        utime.sleep_ms(30)
-        self._chase_pos = (self._chase_pos + 1) % self.n
-
-    def wifi_connected_flash(self):
-        """Quick green flash to confirm WiFi is up."""
-        for _ in range(3):
-            self.fill((0, 200, 0))
-            utime.sleep_ms(120)
-            self.clear()
-            utime.sleep_ms(80)
-
-    def ota_checking_pulse(self, duration_ms=2000):
-        """Blocking purple spinning chase shown while OTA check runs."""
-        end = utime.ticks_add(utime.ticks_ms(), duration_ms)
-        pos = 0
-        spacing = self.n // 3
-        while utime.ticks_diff(end, utime.ticks_ms()) > 0:
-            self.clear()
-            for j in range(3):
-                self._set_pixel((pos + j * spacing) % self.n, (128, 0, 255))
-            self.np.write()
-            utime.sleep_ms(30)
-            pos = (pos + 1) % self.n
-        self.clear()
-
-    def team_wipe(self, color):
-        """Sweep team color from pixel 0 to end, then hold briefly."""
-        self.clear()
-        for i in range(self.n):
-            self._set_pixel(i, color)
-            self.np.write()
-            utime.sleep_ms(8)
-        utime.sleep_ms(400)
-
-    def period_start_flash(self, color):
-        """Three flashes in the given color — shown at period start."""
-        for _ in range(3):
-            self.fill(color)
-            utime.sleep_ms(150)
-            self.clear()
-            utime.sleep_ms(100)
-
-    def error_flash(self):
-        """Red triple-flash on error."""
-        for _ in range(3):
-            self.fill((200, 0, 0))
-            utime.sleep_ms(150)
-            self.clear()
-            utime.sleep_ms(100)
-
-    # ------------------------------------------------------------------
-    # Idle / standby
-    # ------------------------------------------------------------------
-
     def standby_dim(self, primary):
         c = _scale(primary, config.BRIGHTNESS * config.IDLE_BRIGHTNESS)
         for i in range(self.n):
@@ -120,52 +43,125 @@ class LEDEffects:
         self.np.write()
 
     # ------------------------------------------------------------------
-    # GOAL celebration  (blocking for goal_duration seconds)
+    # Boot / status animations (async)
     # ------------------------------------------------------------------
 
-    def goal_celebration(self, primary, secondary, duration_s=None):
+    async def startup_sweep(self, color=(0, 120, 255)):
+        self.clear()
+        for i in range(self.n):
+            self._set_pixel(i, color)
+            self.np.write()
+            await asyncio.sleep_ms(10)
+        for i in range(self.n):
+            self.np[i] = (0, 0, 0)
+            self.np.write()
+            await asyncio.sleep_ms(10)
+
+    async def wifi_connecting_pulse(self):
+        """One spinning-chase frame – await repeatedly while connecting."""
+        self.clear()
+        spacing = self.n // 3
+        for j in range(3):
+            self._set_pixel((self._chase_pos + j * spacing) % self.n, (0, 0, 200))
+        self.np.write()
+        await asyncio.sleep_ms(30)
+        self._chase_pos = (self._chase_pos + 1) % self.n
+
+    async def wifi_connected_flash(self):
+        for _ in range(3):
+            self.fill((0, 200, 0))
+            await asyncio.sleep_ms(120)
+            self.clear()
+            await asyncio.sleep_ms(80)
+
+    async def ota_checking_pulse(self, duration_ms=2000):
+        """Blocking purple spinning chase shown while OTA check runs."""
+        end = duration_ms  # count down in ms steps
+        pos = 0
+        spacing = self.n // 3
+        while end > 0:
+            self.clear()
+            for j in range(3):
+                self._set_pixel((pos + j * spacing) % self.n, (128, 0, 255))
+            self.np.write()
+            await asyncio.sleep_ms(30)
+            pos = (pos + 1) % self.n
+            end -= 30
+        self.clear()
+
+    async def team_wipe(self, color):
+        """Sweep team color from pixel 0 to end, then hold briefly."""
+        self.clear()
+        for i in range(self.n):
+            self._set_pixel(i, color)
+            self.np.write()
+            await asyncio.sleep_ms(8)
+        await asyncio.sleep_ms(400)
+
+    async def period_start_flash(self, color):
+        """Three flashes in the given color — shown at period start."""
+        for _ in range(3):
+            self.fill(color)
+            await asyncio.sleep_ms(150)
+            self.clear()
+            await asyncio.sleep_ms(100)
+
+    async def error_flash(self):
+        for _ in range(3):
+            self.fill((200, 0, 0))
+            await asyncio.sleep_ms(150)
+            self.clear()
+            await asyncio.sleep_ms(100)
+
+    # ------------------------------------------------------------------
+    # GOAL celebration  (async, yields every frame)
+    # ------------------------------------------------------------------
+
+    async def goal_celebration(self, primary, secondary, duration_s=None):
         """
-        Multi-stage goal celebration:
-          1. Rapid alternating flash  (primary / secondary)
-          2. Spinning chase in primary
-          3. Slow fade out
-        Blocks for ~duration_s seconds total.
+        Three-stage goal celebration. Fully async — yields every 40-60 ms
+        so poll_task can run mid-celebration without dropping HTTP calls.
         """
         if duration_s is None:
             duration_s = config.GOAL_FLASH_DURATION
 
-        deadline = utime.ticks_ms() + duration_s * 1000
+        remaining_ms = duration_s * 1000
 
         # Stage 1: rapid strobe alternating team colors (2 seconds)
-        strobe_end = utime.ticks_ms() + 2000
+        strobe_ms = min(2000, remaining_ms)
+        remaining_ms -= strobe_ms
         toggle = True
-        while utime.ticks_diff(strobe_end, utime.ticks_ms()) > 0:
+        while strobe_ms > 0:
             self.fill(primary if toggle else secondary)
-            utime.sleep_ms(60)
+            await asyncio.sleep_ms(60)
             toggle = not toggle
+            strobe_ms -= 60
 
         # Stage 2: spinning chase in primary until 1.5 s before end
-        chase_end = utime.ticks_ms() + max(0, utime.ticks_diff(deadline, utime.ticks_ms()) - 1500)
+        chase_ms = max(0, remaining_ms - 1500)
+        remaining_ms -= chase_ms
         pos = 0
-        while utime.ticks_diff(chase_end, utime.ticks_ms()) > 0:
+        while chase_ms > 0:
             self.clear()
             for j in range(3):
                 idx = (pos + j * (self.n // 3)) % self.n
                 self._set_pixel(idx, primary)
-            # secondary colour trail
             for j in range(3):
                 idx = (pos + j * (self.n // 3) - 1) % self.n
                 self._set_pixel(idx, secondary)
             self.np.write()
             pos = (pos + 1) % self.n
-            utime.sleep_ms(40)
+            await asyncio.sleep_ms(40)
+            chase_ms -= 40
 
-        # Stage 3: fade out
-        for step in range(20, 0, -1):
-            faded = _scale(primary, self.brightness * step / 20)
+        # Stage 3: fade out (remaining_ms ≈ 1500)
+        steps = 20
+        step_ms = max(1, remaining_ms // steps)
+        for step in range(steps, 0, -1):
+            faded = _scale(primary, self.brightness * step / steps)
             for i in range(self.n):
                 self.np[i] = faded
             self.np.write()
-            utime.sleep_ms(60)
+            await asyncio.sleep_ms(step_ms)
 
         self.clear()

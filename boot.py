@@ -1,5 +1,5 @@
+import asyncio
 import network
-import utime
 import machine
 
 import wifi
@@ -8,31 +8,35 @@ from led_effects import LEDEffects
 from team_colors import get_colors
 import updater
 
-leds = LEDEffects()
-primary, _ = get_colors(config.TEAM_ABBREV)
 
-# 1. Spinning blue while connecting to WiFi
-wlan = network.WLAN(network.STA_IF)
-wlan.active(True)
-wlan.connect(wifi.WIFI_SSID, wifi.WIFI_PASSWORD)
-print(f"[Boot] Connecting to '{wifi.WIFI_SSID}'...", end="")
-start = utime.ticks_ms()
-while not wlan.isconnected():
-    if utime.ticks_diff(utime.ticks_ms(), start) > 20_000:
-        print(" FAILED")
-        leds.error_flash()
-        machine.reset()
-    leds.wifi_connecting_pulse()
-print(f" OK  IP={wlan.ifconfig()[0]}")
+async def boot_sequence():
+    leds = LEDEffects()
+    primary, _ = get_colors(config.TEAM_ABBREV)
 
-# 2. Three green flashes on connect
-leds.wifi_connected_flash()
+    # 1. Spinning blue while connecting to WiFi
+    wlan = network.WLAN(network.STA_IF)
+    wlan.active(True)
+    wlan.connect(wifi.WIFI_SSID, wifi.WIFI_PASSWORD)
+    print(f"[Boot] Connecting to '{wifi.WIFI_SSID}'...", end="")
+    from utime import ticks_ms, ticks_diff
+    start = ticks_ms()
+    while not wlan.isconnected():
+        if ticks_diff(ticks_ms(), start) > 20_000:
+            print(" FAILED")
+            await leds.error_flash()
+            machine.reset()
+        await leds.wifi_connecting_pulse()
+    print(f" OK  IP={wlan.ifconfig()[0]}")
 
-# 3. Spinning purple while checking for OTA update
-leds.ota_checking_pulse()
-updater.check_and_update()
+    # 2. Three green flashes on connect
+    await leds.wifi_connected_flash()
 
-# 4. Team colour wipe
-leds.team_wipe(primary)
+    # 3. Spinning purple while checking for OTA update
+    await leds.ota_checking_pulse()
+    updater.check_and_update()  # sync — no other tasks running yet
 
-# boot.py exits → main.py starts
+    # 4. Team colour wipe
+    await leds.team_wipe(primary)
+
+
+asyncio.run(boot_sequence())
