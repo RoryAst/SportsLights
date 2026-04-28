@@ -1,0 +1,5 @@
+wifi.py
+lib/
+__pycache__/
+*.pyc
+*.pyd
