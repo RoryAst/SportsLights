@@ -1,42 +1,15 @@
 # main.py  –  NHL Goal Light  |  MicroPython on Raspberry Pi Pico W
-# Flashes NeoPixels in team colors whenever your NHL team scores.
-#
-# Upload all .py files in this project to the Pico root, then reset.
+# Boot sequence (WiFi, OTA, team wipe) is handled by boot.py.
+# This file owns the polling loop only.
 
 import network
 import utime
-from machine import Pin
 
-import config
 import wifi
+import config
 from led_effects  import LEDEffects
 from nhl_poller   import NHLPoller
 from team_colors  import get_colors
-
-# ---------------------------------------------------------------------------
-# WiFi
-# ---------------------------------------------------------------------------
-
-def connect_wifi(leds):
-    wlan = network.WLAN(network.STA_IF)
-    wlan.active(True)
-    wlan.connect(wifi.WIFI_SSID, wifi.WIFI_PASSWORD)
-
-    print(f"Connecting to '{wifi.WIFI_SSID}' ", end="")
-    timeout = 20          # seconds
-    start   = utime.ticks_ms()
-
-    while not wlan.isconnected():
-        if utime.ticks_diff(utime.ticks_ms(), start) > timeout * 1000:
-            print(" FAILED")
-            leds.error_flash()
-            return False
-        leds.wifi_connecting_pulse()
-        print(".", end="")
-
-    print(f" OK  IP={wlan.ifconfig()[0]}")
-    leds.wifi_connected_flash()
-    return True
 
 
 def ensure_wifi(wlan, leds):
@@ -44,7 +17,7 @@ def ensure_wifi(wlan, leds):
     if not wlan.isconnected():
         print("[WiFi] Reconnecting…")
         wlan.connect(wifi.WIFI_SSID, wifi.WIFI_PASSWORD)
-        for _ in range(20):
+        for _ in range(40):
             if wlan.isconnected():
                 print("[WiFi] Reconnected")
                 return True
@@ -53,48 +26,30 @@ def ensure_wifi(wlan, leds):
         return False
     return True
 
-# ---------------------------------------------------------------------------
-# Main
-# ---------------------------------------------------------------------------
 
 def main():
-    leds   = LEDEffects()
-    leds.startup_sweep()
-
+    leds = LEDEffects()
     primary, secondary = get_colors(config.TEAM_ABBREV)
-    print(f"Team: {config.TEAM_ABBREV}  |  "
-          f"Primary RGB {primary}  |  Secondary RGB {secondary}")
 
-    # Connect to WiFi
-    wlan = network.WLAN(network.STA_IF)
-    wlan.active(True)
-    if not connect_wifi(leds):
-        # Can't connect – blink error and halt so watchdog can reset
-        while True:
-            leds.error_flash()
-            utime.sleep(2)
+    wlan = network.WLAN(network.STA_IF)  # already active and connected from boot.py
 
-    poller   = NHLPoller(config.TEAM_ABBREV)
+    poller    = NHLPoller(config.TEAM_ABBREV)
     last_poll = utime.ticks_ms() - config.POLL_INTERVAL_LIVE * 1000  # poll immediately
-
-
 
     print("Entering main loop…")
 
     while True:
         now = utime.ticks_ms()
 
-        # ---- Determine poll interval based on game state ----
         interval = (config.POLL_INTERVAL_LIVE
                     if poller.current.state in {"LIVE", "CRIT"}
                     else config.POLL_INTERVAL_IDLE)
 
-        # ---- Poll when due ----
         if utime.ticks_diff(now, last_poll) >= interval * 1000:
             if ensure_wifi(wlan, leds):
                 result = poller.fetch()
                 last_poll = utime.ticks_ms()
-                print(f"[Poll] {result:6s}  {poller.summary()}")
+                print(f"[Poll] {result:8s}  {poller.summary()}")
 
                 if result == "GOAL":
                     leds.goal_celebration(primary, secondary,
@@ -106,11 +61,8 @@ def main():
                 elif result == "ERROR":
                     leds.error_flash()
 
-        # ---- Idle LED animation between polls ----
         leds.standby_dim(primary)
-
         utime.sleep_ms(50)
 
 
-# ---------------------------------------------------------------------------
 main()

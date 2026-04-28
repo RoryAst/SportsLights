@@ -70,6 +70,29 @@ class LEDEffects:
             self.clear()
             utime.sleep_ms(80)
 
+    def ota_checking_pulse(self, duration_ms=2000):
+        """Blocking purple spinning chase shown while OTA check runs."""
+        end = utime.ticks_add(utime.ticks_ms(), duration_ms)
+        pos = 0
+        spacing = self.n // 3
+        while utime.ticks_diff(end, utime.ticks_ms()) > 0:
+            self.clear()
+            for j in range(3):
+                self._set_pixel((pos + j * spacing) % self.n, (128, 0, 255))
+            self.np.write()
+            utime.sleep_ms(30)
+            pos = (pos + 1) % self.n
+        self.clear()
+
+    def team_wipe(self, color):
+        """Sweep team color from pixel 0 to end, then hold briefly."""
+        self.clear()
+        for i in range(self.n):
+            self._set_pixel(i, color)
+            self.np.write()
+            utime.sleep_ms(8)
+        utime.sleep_ms(400)
+
     def error_flash(self):
         """Red triple-flash on error."""
         for _ in range(3):
